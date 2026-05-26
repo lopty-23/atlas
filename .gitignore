@@ -14,7 +14,7 @@ wheels/
 .env.local
 
 # Data cache
-data/
+/data/
 *.parquet
 
 # Jupyter
