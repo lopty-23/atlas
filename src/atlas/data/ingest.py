@@ -19,28 +19,22 @@ from dotenv import load_dotenv
 from fredapi import Fred
 
 load_dotenv()
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CACHE_DIR = PROJECT_ROOT / "data"
 
+
 def load_universe(config_path: Path) -> dict[str, Any]:
-    """Load the universe YAML config from disk."""
     with open(config_path) as f:
         return yaml.safe_load(f)
-    
+
+
 def fetch_etf_prices(
     tickers: list[str],
     start: str = "2003-01-01",
     end: str | None = None,
 ) -> pd.DataFrame:
-    """Pull total-return-adjusted close prices for ETFs from Yahoo Finance.
-
-    Uses auto_adjust=True so prices include split + dividend adjustments
-    (i.e. these are total-return-equivalent prices for backtesting).
-
-    Returns
-    -------
-    DataFrame indexed by business-day DatetimeIndex (tz-naive), one column per ticker.
-    """
+    
     raw = yf.download(
         tickers,
         start=start,
@@ -50,9 +44,6 @@ def fetch_etf_prices(
         group_by="ticker",
     )
 
-    # Modern yfinance with group_by="ticker" returns a MultiIndex column frame
-    # like ('SPY', 'Close') even for a single ticker. Normalize to a flat
-    # per-ticker DataFrame of Close prices.
     if isinstance(raw.columns, pd.MultiIndex):
         prices = raw.xs("Close", axis=1, level=1)
     else:
@@ -64,31 +55,54 @@ def fetch_etf_prices(
     return prices.sort_index()
 
 
-def fetch_fred_series(series_ids: list[str]) -> pd.DataFrame:
-    """Pull macro time series from FRED.
-
-    Series are indexed by their REFERENCE date (the period the data describes),
-    NOT their publication date. Publication-lag handling happens later in
-    point_in_time.py.
-
-    Raises
-    ------
-    RuntimeError if FRED_API_KEY is not in the environment.
-    """
+def _get_fred_client() -> Fred:
+    """Build a FRED client, raising a clear error if the key is missing."""
     api_key = os.environ.get("FRED_API_KEY")
     if not api_key:
         raise RuntimeError(
             "FRED_API_KEY missing. Check that .env exists and contains the key."
         )
+    return Fred(api_key=api_key)
 
-    fred = Fred(api_key=api_key)
+
+def fetch_fred_series(series_ids: list[str]) -> pd.DataFrame:
+    """Pull LATEST values of macro time series from FRED.
+
+    Use this for series where revisions don't materially matter (market-based
+    series: yields, FX, VIX, breakevens, credit spreads). For revision-heavy
+    series, use `fetch_fred_vintages` instead.
+
+    Series are indexed by their REFERENCE date (the period the data describes).
+    Publication-lag handling happens in point_in_time.py.
+    """
+    fred = _get_fred_client()
     frames: dict[str, pd.Series] = {}
     for sid in series_ids:
         s = fred.get_series(sid)
         s.index = pd.DatetimeIndex(s.index).tz_localize(None)
         frames[sid] = s
-
     return pd.DataFrame(frames).sort_index()
+
+
+def fetch_fred_vintages(series_ids: list[str]) -> pd.DataFrame:
+    """Pull ALL releases of macro series from ALFRED (vintage data).
+
+    Returns the long-format vintage history: every observation period has one
+    row per release, with `realtime_start` recording when that value became
+    publicly known. 
+    """
+    fred = _get_fred_client()
+    frames: list[pd.DataFrame] = []
+    for sid in series_ids:
+        df = fred.get_series_all_releases(sid)
+        df = df.rename(
+            columns={"realtime_start": "vintage_date", "date": "observation_date"}
+        )
+        df["series_id"] = sid
+        df["vintage_date"] = pd.to_datetime(df["vintage_date"])
+        df["observation_date"] = pd.to_datetime(df["observation_date"])
+        frames.append(df[["series_id", "observation_date", "vintage_date", "value"]])
+    return pd.concat(frames, ignore_index=True)
 
 
 def cache_path(name: str, cache_dir: Path = DEFAULT_CACHE_DIR) -> Path:
@@ -97,15 +111,33 @@ def cache_path(name: str, cache_dir: Path = DEFAULT_CACHE_DIR) -> Path:
     return cache_dir / f"{name}.parquet"
 
 
+def _split_series_by_vintage_flag(
+    universe: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    """Partition FRED series into (non-vintage, vintage) lists based on the
+    `vintage: true` flag in the config."""
+    non_vintage: list[str] = []
+    vintage: list[str] = []
+    for group in universe["fred_series"].values():
+        for item in group:
+            if item.get("vintage", False):
+                vintage.append(item["id"])
+            else:
+                non_vintage.append(item["id"])
+    return non_vintage, vintage
+
+
 def ingest_all(config_path: Path) -> None:
     """Top-level orchestrator: read config, fetch all data, write parquet cache.
 
-    This is the only function in this module that performs side effects on
-    disk. Everything else returns DataFrames so it's easy to test.
+    Writes three parquet files to `data/`:
+        etf_prices.parquet     : wide ETF prices
+        fred_raw.parquet       : wide non-vintage FRED series
+        fred_vintages.parquet  : long-format vintage data
     """
     universe = load_universe(config_path)
 
-    # Flatten the nested ETF config into a single ticker list
+    # --- ETFs ---
     etf_tickers = [
         item["ticker"]
         for asset_class in universe["etfs"].values()
@@ -120,13 +152,19 @@ def ingest_all(config_path: Path) -> None:
     prices.to_parquet(cache_path("etf_prices"))
     print(f"  -> wrote {prices.shape[0]} days x {prices.shape[1]} ETFs")
 
-    # Same flattening for FRED series
-    fred_ids = [
-        item["id"]
-        for group in universe["fred_series"].values()
-        for item in group
-    ]
-    print(f"Fetching {len(fred_ids)} FRED series...")
-    fred = fetch_fred_series(fred_ids)
-    fred.to_parquet(cache_path("fred_raw"))
-    print(f"  -> wrote {fred.shape[0]} rows x {fred.shape[1]} series")
+    # --- FRED: split into vintage and non-vintage paths ---
+    non_vintage_ids, vintage_ids = _split_series_by_vintage_flag(universe)
+
+    print(f"Fetching {len(non_vintage_ids)} non-vintage FRED series...")
+    fred_raw = fetch_fred_series(non_vintage_ids)
+    fred_raw.to_parquet(cache_path("fred_raw"))
+    print(f"  -> wrote {fred_raw.shape[0]} rows x {fred_raw.shape[1]} series")
+
+    print(
+        f"Fetching {len(vintage_ids)} vintage-aware FRED series "
+        f"(this is slower; each series has hundreds of releases)..."
+    )
+    fred_vintages = fetch_fred_vintages(vintage_ids)
+    fred_vintages.to_parquet(cache_path("fred_vintages"))
+    n_unique_series = fred_vintages["series_id"].nunique()
+    print(f"  -> wrote {len(fred_vintages)} rows across {n_unique_series} series")
