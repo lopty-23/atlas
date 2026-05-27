@@ -6,12 +6,18 @@
 # - Backtests will use max(all starts) as effective start date, OR you can
 #   allow assets to enter the panel as they become available (preferred)
 #
-# Notes on FRED lag_days:
-# - This is the typical publication lag in business days for each series
-# - CPI: ~14 business days (released mid-month for the prior month)
-# - Daily series (yields, VIX, FX): 1 business day to be safe
-# - Quarterly GDP: ~25 business days for first release
-# - These are conservative estimates; for production use ALFRED vintages
+# Notes on FRED lag_days (verified May 2026):
+# - Lag is in business days from REFERENCE date to date the value is safely
+#   known by close-of-business for trading decisions.
+# - Daily H.15 series (DGS10, DGS2, DGS3MO, DFF, T10Y3M, T10Y2Y, T5YIE, BAA10Y):
+#   H.15 posts at 4:15pm ET, same business day. Lag=1 reflects "known by next
+#   close" — safe for daily strategies that trade next-day or next-open.
+# - VIXCLS, DTWEXBGS: FRED updates next morning. Lag=1.
+# - NFCI: published Wednesday 8:30am ET covering through prior Friday.
+#   Friday's value is known by Wednesday's close, so lag=3 business days.
+# - Vintage-aware series (CPI, PCE, GDP, NFP, IP, UNRATE): use ALFRED real
+#   publication dates from `align_vintages_to_calendar` — lag_days here is
+#   only a fallback if ALFRED data is missing for that series.
 
 etfs:
   us_equity:
@@ -52,18 +58,18 @@ fred_series:
     - {id: T10Y2Y,   name: "10y-2y spread",           lag_days: 1}
     - {id: DFF,      name: "Effective Fed Funds",     lag_days: 1}
   inflation:
-    - {id: CPIAUCSL, name: "Headline CPI",            lag_days: 14}
-    - {id: CPILFESL, name: "Core CPI",                lag_days: 14}
-    - {id: PCEPI,    name: "PCE deflator",            lag_days: 25}
+    - {id: CPIAUCSL, name: "Headline CPI",            lag_days: 14, vintage: true}
+    - {id: CPILFESL, name: "Core CPI",                lag_days: 14, vintage: true}
+    - {id: PCEPI,    name: "PCE deflator",            lag_days: 25, vintage: true}
     - {id: T5YIE,    name: "5y breakeven inflation",  lag_days: 1}
   activity:
-    - {id: INDPRO,   name: "Industrial Production",   lag_days: 14}
-    - {id: PAYEMS,   name: "Nonfarm Payrolls",        lag_days: 5}
-    - {id: UNRATE,   name: "Unemployment rate",       lag_days: 5}
-    - {id: GDPC1,    name: "Real GDP",                lag_days: 25}
+    - {id: INDPRO,   name: "Industrial Production",   lag_days: 14, vintage: true}
+    - {id: PAYEMS,   name: "Nonfarm Payrolls",        lag_days: 5,  vintage: true}
+    - {id: UNRATE,   name: "Unemployment rate",       lag_days: 5,  vintage: true}
+    - {id: GDPC1,    name: "Real GDP",                lag_days: 25, vintage: true}
   financial:
     - {id: BAA10Y,   name: "BAA-10y credit spread",   lag_days: 1}
-    - {id: NFCI,     name: "NFCI",                    lag_days: 7}
+    - {id: NFCI,     name: "NFCI",                    lag_days: 5}
     - {id: VIXCLS,   name: "VIX",                     lag_days: 1}
     - {id: DTWEXBGS, name: "Trade-weighted USD",      lag_days: 1}
 
