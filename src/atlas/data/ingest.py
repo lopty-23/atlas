@@ -2,6 +2,8 @@
 
 Public entry points:
     fetch_etf_prices(tickers, start, end) -> DataFrame
+    fetch_etf_prices_unadjusted(tickers, start, end) -> DataFrame
+    fetch_etf_dividends(tickers, start, end) -> DataFrame
     fetch_fred_series(series_ids) -> DataFrame
     ingest_all(config_path) -> None       # orchestrator: reads config, writes cache
 """
@@ -53,6 +55,74 @@ def fetch_etf_prices(
 
     prices.index = pd.DatetimeIndex(prices.index).tz_localize(None)
     return prices.sort_index()
+
+
+def fetch_etf_prices_unadjusted(
+    tickers: list[str],
+    start: str = "2003-01-01",
+    end: str | None = None,
+) -> pd.DataFrame:
+    """Pull UNADJUSTED closing prices.
+
+    The adjusted-close in `fetch_etf_prices` folds dividends back into the
+    price series, which is the right input for total-return / momentum work
+    but the WRONG denominator for a distribution yield: an investor on date
+    t pays the actual market price, not a back-adjusted one. Use this
+    function whenever the result is divided by a price level (e.g.
+    trailing-12m yield).
+    """
+    raw = yf.download(
+        tickers,
+        start=start,
+        end=end,
+        auto_adjust=False,
+        progress=False,
+        group_by="ticker",
+    )
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        prices = raw.xs("Close", axis=1, level=1)
+    else:
+        prices = raw[["Close"]].rename(columns={"Close": tickers[0]})
+
+    prices = prices.dropna(axis=1, how="all")
+    prices.index = pd.DatetimeIndex(prices.index).tz_localize(None).normalize()
+    return prices.sort_index()
+
+
+def fetch_etf_dividends(
+    tickers: list[str],
+    start: str | None = None,
+    end: str | None = None,
+) -> pd.DataFrame:
+    """Pull per-ticker dividend history as a wide DataFrame.
+
+    Index: ex-dividend dates (normalized to midnight, tz-naive).
+    Columns: one per ticker. NaN where a ticker did not pay on that date.
+
+    yfinance returns dividend timestamps tz-aware at the 09:30 NY open;
+    we strip tz and normalize so dates align with the daily price index
+    (which is midnight tz-naive). Without normalize() a reindex onto the
+    price calendar silently drops every payment.
+    """
+    series_by_ticker: dict[str, pd.Series] = {}
+    for t in tickers:
+        s = yf.Ticker(t).dividends.copy()
+        if s.empty:
+            continue
+        s.index = pd.DatetimeIndex(s.index).tz_localize(None).normalize()
+        s = s.sort_index()
+        s = s[~s.index.duplicated(keep="last")]
+        if start is not None:
+            s = s[s.index >= pd.Timestamp(start)]
+        if end is not None:
+            s = s[s.index <= pd.Timestamp(end)]
+        series_by_ticker[t] = s
+
+    if not series_by_ticker:
+        return pd.DataFrame()
+
+    return pd.DataFrame(series_by_ticker).sort_index()
 
 
 def _get_fred_client() -> Fred:
@@ -130,10 +200,12 @@ def _split_series_by_vintage_flag(
 def ingest_all(config_path: Path) -> None:
     """Top-level orchestrator: read config, fetch all data, write parquet cache.
 
-    Writes three parquet files to `data/`:
-        etf_prices.parquet     : wide ETF prices
-        fred_raw.parquet       : wide non-vintage FRED series
-        fred_vintages.parquet  : long-format vintage data
+    Writes five parquet files to `data/`:
+        etf_prices.parquet              : wide ETF prices, AUTO-ADJUSTED (for returns)
+        etf_prices_unadjusted.parquet   : wide ETF prices, UNADJUSTED (for yield denom)
+        etf_dividends.parquet           : wide dividend payments, NaN where no payment
+        fred_raw.parquet                : wide non-vintage FRED series
+        fred_vintages.parquet           : long-format vintage data
     """
     universe = load_universe(config_path)
 
@@ -143,14 +215,25 @@ def ingest_all(config_path: Path) -> None:
         for asset_class in universe["etfs"].values()
         for item in asset_class
     ]
-    print(f"Fetching {len(etf_tickers)} ETFs from Yahoo Finance...")
-    prices = fetch_etf_prices(
-        etf_tickers,
-        start=universe["settings"]["start_date"],
-        end=universe["settings"]["end_date"],
-    )
+    start = universe["settings"]["start_date"]
+    end = universe["settings"]["end_date"]
+
+    print(f"Fetching {len(etf_tickers)} ETFs (adjusted close) from Yahoo Finance...")
+    prices = fetch_etf_prices(etf_tickers, start=start, end=end)
     prices.to_parquet(cache_path("etf_prices"))
     print(f"  -> wrote {prices.shape[0]} days x {prices.shape[1]} ETFs")
+
+    print(f"Fetching {len(etf_tickers)} ETFs (UNADJUSTED close) from Yahoo Finance...")
+    prices_unadj = fetch_etf_prices_unadjusted(etf_tickers, start=start, end=end)
+    prices_unadj.to_parquet(cache_path("etf_prices_unadjusted"))
+    print(f"  -> wrote {prices_unadj.shape[0]} days x {prices_unadj.shape[1]} ETFs")
+
+    print(f"Fetching dividend history for {len(etf_tickers)} ETFs...")
+    divs = fetch_etf_dividends(etf_tickers, start=start, end=end)
+    divs.to_parquet(cache_path("etf_dividends"))
+    n_payments = int(divs.notna().sum().sum())
+    print(f"  -> wrote {divs.shape[0]} ex-dates x {divs.shape[1]} ETFs "
+          f"({n_payments} total payments)")
 
     # --- FRED: split into vintage and non-vintage paths ---
     non_vintage_ids, vintage_ids = _split_series_by_vintage_flag(universe)
