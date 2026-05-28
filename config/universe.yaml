@@ -54,9 +54,14 @@ fred_series:
     - {id: DGS10,    name: "10y Treasury yield",      lag_days: 1}
     - {id: DGS2,     name: "2y Treasury yield",       lag_days: 1}
     - {id: DGS3MO,   name: "3m T-bill yield",         lag_days: 1}
+    - {id: DGS30,    name: "30y Treasury yield",      lag_days: 1}
     - {id: T10Y3M,   name: "10y-3m spread",           lag_days: 1}
     - {id: T10Y2Y,   name: "10y-2y spread",           lag_days: 1}
     - {id: DFF,      name: "Effective Fed Funds",     lag_days: 1}
+    - {id: IR3TIB01EZM156N, name: "EUR 3m interbank",  lag_days: 33}
+    - {id: IR3TIB01JPM156N, name: "JPY 3m interbank",  lag_days: 33}
+    - {id: IR3TIB01GBM156N, name: "GBP 3m interbank",  lag_days: 33}
+    - {id: IR3TIB01AUM156N, name: "AUD 3m interbank",  lag_days: 33}  
   inflation:
     - {id: CPIAUCSL, name: "Headline CPI",            lag_days: 14, vintage: true}
     - {id: CPILFESL, name: "Core CPI",                lag_days: 14, vintage: true}
