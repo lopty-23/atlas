@@ -29,25 +29,6 @@ TRADING_DAYS = 252
 
 
 class GrowthTrend(Signal):
-    """Business-cycle growth trend mapped onto assets via fixed betas.
-
-    Raw signal for each asset = composite_growth_score(t) * beta[asset].
-    Pro-cyclical assets (beta +1) load positively on accelerating growth;
-    counter-cyclical assets (beta -1) load negatively; neutral assets
-    (beta 0) abstain (NaN).
-
-    Parameters
-    ----------
-    indicators : tuple[str, ...]
-        FRED series (vintage-aware) used as growth indicators.
-    growth_betas : dict[str, float]
-        Per-asset growth beta sign. Assets absent from the map, or with
-        beta 0, abstain.
-    min_periods : int
-        Minimum observations before the expanding z-score produces a value
-        (avoids unstable estimates early in the sample).
-    """
-
     DEFAULT_INDICATORS = ("INDPRO", "PAYEMS", "GDPC1")
 
     DEFAULT_GROWTH_BETAS = {
@@ -84,21 +65,6 @@ class GrowthTrend(Signal):
 
     @staticmethod
     def _yoy_excess(series: pd.Series, baseline_window: int = 3 * TRADING_DAYS) -> pd.Series:
-        """Year-over-year growth relative to its own recent average.
-
-        yoy(t)    = series(t) / series(t - 1yr) - 1
-        excess(t) = yoy(t) - rolling_mean(yoy, baseline_window)
-
-        This "excess growth" measure (Macrosynergy/JPMaQS convention) is the
-        deviation of current growth from its recent norm. Unlike the
-        year-over-year-of-year-over-year "acceleration" measure, it is robust
-        to base effects: during sharp collapses (GFC, COVID) yoy falls far
-        below its recent average, producing the deeply negative reading we
-        want, rather than averaging out across the collapse-and-rebound.
-
-        Backward-looking only (trailing shift and trailing rolling mean), so
-        point-in-time safe.
-        """
         yoy = series / series.shift(TRADING_DAYS) - 1.0
         baseline = yoy.rolling(window=baseline_window, min_periods=TRADING_DAYS).mean()
         return yoy - baseline

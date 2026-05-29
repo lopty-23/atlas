@@ -1,11 +1,10 @@
 """Apply publication lags and vintage tracking to FRED data.
 
-Every macro release has a publication delay between the reference date
-(the period the data describes) and the publication date (when it became
-publicly known). A backtest using values between those two dates is
-cheating — it uses information that didn't yet exist.
+Every macro release has a publication delay between the reference date 
+and the publication date. A backtest can only use information after it 
+has been published.
 
-This module handles two flavors of correction:
+This module handles two types of correction:
 
 1. FIXED LAG (`apply_publication_lags`): For market-based series where
    revisions don't materially happen (yields, FX, VIX, breakevens),
@@ -14,10 +13,10 @@ This module handles two flavors of correction:
 2. VINTAGES (`align_vintages_to_calendar`): For revision-heavy series
    (GDP, payrolls, CPI), use the long-format vintage data to know
    exactly what was publicly known on each date — including which
-   *revision* was the latest at that moment.
+   revision was the latest at that moment.
 
-The two paths converge: both produce a DataFrame indexed by trading-day
-calendar, where every cell is "what was publicly known on date t."
+Both produce a DataFrame indexed by trading-day calendar, where every 
+cell details what is publicly known on that day
 
 Public entry points:
     apply_publication_lags(raw_fred, lag_map, target_index) -> DataFrame
@@ -60,11 +59,7 @@ def apply_publication_lags(
     lag_map: dict[str, int],
     target_index: pd.DatetimeIndex,
 ) -> pd.DataFrame:
-    """Shift each FRED series forward by its publication lag, then align onto
-    a daily business-day index using forward-fill.
-
-    Use this for market-based series only. For revision-heavy series, use
-    `align_vintages_to_calendar` instead."""
+    """Fixed lag"""
     out = pd.DataFrame(index=target_index)
 
     for series_id, lag in lag_map.items():
@@ -79,7 +74,7 @@ def apply_publication_lags(
         pub_dates = ref_series.index + pd.tseries.offsets.BDay(lag)
         pub_series = pd.Series(ref_series.values, index=pub_dates, name=series_id)
 
-        # Handle (rare) duplicate publication dates by keeping the latest value.
+        # Handle duplicate publication dates by keeping the latest value.
         pub_series = pub_series[~pub_series.index.duplicated(keep="last")]
 
         # Reindex onto target business-day calendar with forward-fill.
@@ -93,33 +88,14 @@ def align_vintages_to_calendar(
     vintages: pd.DataFrame,
     target_index: pd.DatetimeIndex,
 ) -> pd.DataFrame:
-    """Convert long-format vintage data into a daily point-in-time wide frame.
-
-    Each cell (t, series) is the value of `series` for the LATEST observation
-    period available in the LATEST vintage published on or before t. This is
-    "what was knowable about this series at close of business on date t,"
-    fully respecting revisions.
-
-    The vintage data is long-format: for each vintage_date (a publication
-    event), it contains MANY rows — one per observation_date (every period
-    that publication reported, often going back decades). For each vintage we
-    must take the value for its LATEST observation_date (the freshest period
-    that publication covered), NOT an arbitrary historical observation.
-    """
+    """Keep only the latest observation from each vintage, then forward-fill onto the calendar."""
     out = pd.DataFrame(index=target_index)
 
     for series_id in vintages["series_id"].unique():
         sub = vintages[vintages["series_id"] == series_id].copy()
 
-        # For each vintage (publication event), keep only the row for the
-        # LATEST observation period that vintage reported. Sorting by both
-        # keys then taking the last row per vintage_date guarantees we select
-        # the newest observation within each vintage, not an arbitrary one.
-        sub = sub.sort_values(["vintage_date", "observation_date"])
         latest_per_vintage = sub.groupby("vintage_date", as_index=True).last()
 
-        # latest_per_vintage is now indexed by vintage_date, one row each,
-        # holding that vintage's most-recent-period value.
         pub_series = pd.Series(
             latest_per_vintage["value"].values,
             index=pd.DatetimeIndex(latest_per_vintage.index),
@@ -127,8 +103,6 @@ def align_vintages_to_calendar(
         )
         pub_series = pub_series.sort_index()
 
-        # Forward-fill onto the trading calendar: on date t, the value is the
-        # latest vintage published on or before t.
         aligned = pub_series.reindex(target_index, method="ffill")
         out[series_id] = aligned
 
@@ -145,11 +119,9 @@ def build_pit_macro(
     prices: pd.DataFrame,
     universe_config: dict[str, Any],
 ) -> pd.DataFrame:
-    """Build the unified point-in-time macro DataFrame.
+    """Build the unified point-in-time macro DataFrame including both 
+    fixed-lag and vintage paths"""
 
-    Combines the fixed-lag path (for market series) and the vintage path
-    (for revision-heavy series) into one wide DataFrame indexed by the
-    prices' trading calendar."""
     if not isinstance(prices.index, pd.DatetimeIndex):
         raise TypeError("prices.index must be a DatetimeIndex")
 

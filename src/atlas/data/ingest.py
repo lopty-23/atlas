@@ -62,15 +62,7 @@ def fetch_etf_prices_unadjusted(
     start: str = "2003-01-01",
     end: str | None = None,
 ) -> pd.DataFrame:
-    """Pull UNADJUSTED closing prices.
-
-    The adjusted-close in `fetch_etf_prices` folds dividends back into the
-    price series, which is the right input for total-return / momentum work
-    but the WRONG denominator for a distribution yield: an investor on date
-    t pays the actual market price, not a back-adjusted one. Use this
-    function whenever the result is divided by a price level (e.g.
-    trailing-12m yield).
-    """
+    """Pull UNADJUSTED closing prices to calculate dividend yields"""
     raw = yf.download(
         tickers,
         start=start,
@@ -95,15 +87,9 @@ def fetch_etf_dividends(
     start: str | None = None,
     end: str | None = None,
 ) -> pd.DataFrame:
-    """Pull per-ticker dividend history as a wide DataFrame.
-
-    Index: ex-dividend dates (normalized to midnight, tz-naive).
-    Columns: one per ticker. NaN where a ticker did not pay on that date.
-
-    yfinance returns dividend timestamps tz-aware at the 09:30 NY open;
-    we strip tz and normalize so dates align with the daily price index
-    (which is midnight tz-naive). Without normalize() a reindex onto the
-    price calendar silently drops every payment.
+    """Pull per-ticker dividend history as a wide DataFrame.yfinance returns 
+    dividend timestamps tz-aware at the 09:30 NY open; we strip tz and normalize 
+    so dates align with the daily price index (which is midnight tz-naive). 
     """
     series_by_ticker: dict[str, pd.Series] = {}
     for t in tickers:
@@ -136,11 +122,8 @@ def _get_fred_client() -> Fred:
 
 
 def fetch_fred_series(series_ids: list[str]) -> pd.DataFrame:
-    """Pull LATEST values of macro time series from FRED.
-
-    Use this for series where revisions don't materially matter (market-based
-    series: yields, FX, VIX, breakevens, credit spreads). For revision-heavy
-    series, use `fetch_fred_vintages` instead.
+    """Pull LATEST values of macro time series from FRED for series where
+    revisions don't materially matter (fixed-lag).
 
     Series are indexed by their REFERENCE date (the period the data describes).
     Publication-lag handling happens in point_in_time.py.

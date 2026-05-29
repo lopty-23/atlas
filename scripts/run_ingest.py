@@ -1,10 +1,11 @@
 """Run the full data ingestion pipeline: ETFs + non-vintage FRED + vintages.
 
-This is the entry point you run when you want to refresh your data cache.
-It writes three parquet files to data/:
+It writes five parquet files to data/:
     etf_prices.parquet
     fred_raw.parquet
     fred_vintages.parquet
+    etf_prices_unadjusted.parquet
+    etf_dividends.parquet
 """
 from __future__ import annotations
 

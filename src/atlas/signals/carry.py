@@ -15,12 +15,7 @@ class BondCarry(Signal):
     IEF, TLT, LQD, HYG, EMB; curve-carry path for BWX.
 
     Each dist-yield ETF abstains (NaN) until a FULL trailing window has
-    elapsed since its first ex-date. Masking only until the first ex-date
-    is not enough: during the partial first year, a rolling-12m sum holds
-    only k/12 of an annual coupon and the implied "annual yield" is
-    artificially low. So we mask all rows with index < first_div +
-    yield_window_days, by which point the trailing sum reflects a
-    complete year of payments.
+    elapsed since its first ex-date. 
     """
 
     DEFAULT_MATURITY_MAP = {
@@ -129,9 +124,6 @@ class BondCarry(Signal):
 
 class FXCarry(Signal):
     """FX carry: foreign short rate minus USD short rate, per currency ETF.
-
-    A higher-yielding currency earns positive carry. Each currency ETF maps to
-    its foreign short-rate series; the signal is (foreign rate - USD rate).
 
     UUP (long USD index) is treated as the inverse: USD rate minus the average
     of the available foreign rates.
