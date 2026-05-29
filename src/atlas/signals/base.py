@@ -16,9 +16,21 @@ import pandas as pd
 
 
 class Signal(ABC):
-    def __init__(self, name: str | None = None) -> None:
+    VALID_NORMALIZATIONS = ("cross_sectional", "time_series")
+
+    def __init__(
+        self,
+        name: str | None = None,
+        normalization: str = "cross_sectional",
+    ) -> None:
         # Default the signal's name to its class name if not provided.
         self.name = name or self.__class__.__name__
+        if normalization not in self.VALID_NORMALIZATIONS:
+            raise ValueError(
+                f"normalization must be one of {self.VALID_NORMALIZATIONS}, "
+                f"got {normalization!r}"
+            )
+        self.normalization = normalization
 
     @abstractmethod
     def _compute_raw(
@@ -40,8 +52,35 @@ class Signal(ABC):
     def compute(
         self, prices: pd.DataFrame, macro: pd.DataFrame
     ) -> pd.DataFrame:
-        """Compute the final, post-processed signal."""
+        """Compute the final, post-processed signal.
+
+        Normalization depends on the signal's `normalization` mode:
+
+        - "cross_sectional" (default): raw -> winsorize -> cross-sectional
+          z-score. For signals that RANK assets against each other on each
+          date (momentum, carry). Output magnitude reflects an asset's
+          position relative to peers that day.
+
+        - "time_series": raw values pass through unchanged. For signals that
+          express a single directional view applied via per-asset betas
+          (growth trend, inflation trend), where the raw signal is ALREADY
+          normalized against its own history inside `_compute_raw`.
+          Cross-sectional z-scoring would flatten the magnitude (every asset
+          in a beta-group shares one value), discarding the strength of the
+          view — so we skip it and preserve the magnitude.
+
+        Returns
+        -------
+        DataFrame indexed by date, one column per asset.
+        """
         raw = self._compute_raw(prices, macro)
+
+        if self.normalization == "time_series":
+            # Already time-series-normalized inside _compute_raw; pass through.
+            # Cross-sectional winsorize/z-score would destroy the magnitude.
+            return raw
+
+        # Default: cross-sectional path.
         winsorized = self._winsorize(raw, limit=4.0)
         standardized = self._cross_sectional_zscore(winsorized)
         return standardized
