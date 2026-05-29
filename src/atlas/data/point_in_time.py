@@ -96,28 +96,43 @@ def align_vintages_to_calendar(
     """Convert long-format vintage data into a daily point-in-time wide frame.
 
     Each cell (t, series) is the value of `series` for the LATEST observation
-    period whose LATEST vintage was published on or before t. This is
+    period available in the LATEST vintage published on or before t. This is
     "what was knowable about this series at close of business on date t,"
-    fully respecting revisions."""
+    fully respecting revisions.
+
+    The vintage data is long-format: for each vintage_date (a publication
+    event), it contains MANY rows — one per observation_date (every period
+    that publication reported, often going back decades). For each vintage we
+    must take the value for its LATEST observation_date (the freshest period
+    that publication covered), NOT an arbitrary historical observation.
+    """
     out = pd.DataFrame(index=target_index)
 
     for series_id in vintages["series_id"].unique():
         sub = vintages[vintages["series_id"] == series_id].copy()
-        sub = sub.sort_values("vintage_date")
 
+        # For each vintage (publication event), keep only the row for the
+        # LATEST observation period that vintage reported. Sorting by both
+        # keys then taking the last row per vintage_date guarantees we select
+        # the newest observation within each vintage, not an arbitrary one.
+        sub = sub.sort_values(["vintage_date", "observation_date"])
+        latest_per_vintage = sub.groupby("vintage_date", as_index=True).last()
+
+        # latest_per_vintage is now indexed by vintage_date, one row each,
+        # holding that vintage's most-recent-period value.
         pub_series = pd.Series(
-            sub["value"].values,
-            index=pd.DatetimeIndex(sub["vintage_date"]),
+            latest_per_vintage["value"].values,
+            index=pd.DatetimeIndex(latest_per_vintage.index),
             name=series_id,
         )
-        pub_series = pub_series[~pub_series.index.duplicated(keep="last")]
         pub_series = pub_series.sort_index()
 
+        # Forward-fill onto the trading calendar: on date t, the value is the
+        # latest vintage published on or before t.
         aligned = pub_series.reindex(target_index, method="ffill")
         out[series_id] = aligned
 
     return out
-
 
 # ---------------------------------------------------------------------------
 # Top-level orchestrator

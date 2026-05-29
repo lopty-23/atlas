@@ -220,6 +220,77 @@ class TestAlignVintagesToCalendar:
         assert result["CPI"].asof("2024-05-01") == 309.0
         assert result["GDP"].asof("2024-05-01") == 1.6
 
+class TestVintageValueSelection:
+    """Regression tests for the vintage VALUE-selection bug.
+
+    A single vintage (one publication) contains many observation_dates — the
+    whole history that publication reported. The alignment must take, for each
+    vintage, the value at its LATEST observation_date (the freshest period that
+    publication covered), NOT an arbitrary older observation. The original bug
+    deduplicated on vintage_date without sorting by observation_date, so it
+    grabbed a decades-old observation and placed it on a modern trading date.
+    """
+
+    @staticmethod
+    def _multi_observation_vintage() -> pd.DataFrame:
+        """One series, two vintages, each reporting MULTIPLE observation periods.
+
+        Vintage published 2020-02-01 reports periods 2019-11 .. 2020-01.
+        Vintage published 2020-03-01 reports periods 2019-12 .. 2020-02.
+        The latest-observation value in each vintage is the one that should
+        appear on the calendar. Old observations (e.g. 2019-11) must NEVER
+        surface as the current value.
+        """
+        rows = [
+            # vintage published 2020-02-01: history with latest obs = 2020-01 -> value 100
+            {"series_id": "TEST", "observation_date": "2019-11-01", "vintage_date": "2020-02-01", "value": 80.0},
+            {"series_id": "TEST", "observation_date": "2019-12-01", "vintage_date": "2020-02-01", "value": 90.0},
+            {"series_id": "TEST", "observation_date": "2020-01-01", "vintage_date": "2020-02-01", "value": 100.0},
+            # vintage published 2020-03-01: latest obs = 2020-02 -> value 110
+            {"series_id": "TEST", "observation_date": "2019-12-01", "vintage_date": "2020-03-01", "value": 91.0},
+            {"series_id": "TEST", "observation_date": "2020-01-01", "vintage_date": "2020-03-01", "value": 101.0},
+            {"series_id": "TEST", "observation_date": "2020-02-01", "vintage_date": "2020-03-01", "value": 110.0},
+        ]
+        df = pd.DataFrame(rows)
+        df["observation_date"] = pd.to_datetime(df["observation_date"])
+        df["vintage_date"] = pd.to_datetime(df["vintage_date"])
+        return df
+
+    def test_latest_observation_selected_per_vintage(self) -> None:
+        vintages = self._multi_observation_vintage()
+        # Trading calendar spanning both vintages.
+        target = pd.bdate_range("2020-02-03", "2020-03-10")
+        aligned = align_vintages_to_calendar(vintages, target)
+
+        # After the first vintage (pub 2020-02-01) is visible, the value must be
+        # 100 (its LATEST observation, 2020-01), NOT 80 or 90 (older observations).
+        feb_value = aligned["TEST"].asof(pd.Timestamp("2020-02-15"))
+        assert np.isclose(feb_value, 100.0), (
+            f"Expected latest-observation value 100 from the Feb vintage, got {feb_value} "
+            "(an older observation leaking through is the bug this guards against)"
+        )
+
+        # After the second vintage (pub 2020-03-01), value must be 110 (its
+        # latest observation, 2020-02), reflecting the newer publication.
+        mar_value = aligned["TEST"].asof(pd.Timestamp("2020-03-05"))
+        assert np.isclose(mar_value, 110.0), (
+            f"Expected latest-observation value 110 from the Mar vintage, got {mar_value}"
+        )
+
+    def test_old_observations_never_surface(self) -> None:
+        """No date should ever show one of the old historical observations
+        (80, 90, 91, 101) as the current value — only the per-vintage latest."""
+        vintages = self._multi_observation_vintage()
+        target = pd.bdate_range("2020-02-03", "2020-03-10")
+        aligned = align_vintages_to_calendar(vintages, target)["TEST"].dropna()
+
+        forbidden = {80.0, 90.0, 91.0, 101.0}
+        surfaced = set(aligned.round(1).unique())
+        assert not (surfaced & forbidden), (
+            f"Old intra-vintage observations leaked onto the calendar: "
+            f"{surfaced & forbidden}. Only per-vintage latest values (100, 110) are valid."
+        )
+
 # ---------------------------------------------------------------------------
 # Build-pit-macro integration
 # ---------------------------------------------------------------------------
