@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from atlas.signals.macro_trend import GrowthTrend
+from atlas.signals.macro_trend import InflationTrend
 
 
 def _macro_with_growth(
@@ -144,3 +145,99 @@ class TestAbstention:
         assert scores["SPY"].isna().all(), (
             "With no available indicators, the signal should be all-NaN"
         )
+
+def _macro_with_inflation(n_years: int = 8) -> pd.DataFrame:
+    """Macro frame with a CPI index (steady, then a sharp surge) and a
+    breakeven RATE that tracks it. Lets us test both the index path
+    (YoY-excess) and the rate path (level-excess)."""
+    n = n_years * 252
+    idx = pd.bdate_range("2010-01-01", periods=n)
+    cpi = np.empty(n)
+    breakeven = np.empty(n)
+    for i in range(n):
+        year = i / 252
+        if year < 5:
+            cpi[i] = 250.0 * (1.02 ** year)       # steady ~2% inflation
+            breakeven[i] = 2.0                      # steady 2% expected
+        else:
+            # inflation surge: prices accelerate, expectations jump
+            cpi[i] = 250.0 * (1.02 ** 5) * (1.07 ** (year - 5))  # ~7%/yr
+            breakeven[i] = 2.0 + 3.0 * (year - 5)   # expectations climb
+    return pd.DataFrame({"CPIAUCSL": cpi, "T5YIE": breakeven}, index=idx)
+
+
+class TestLevelExcess:
+    """The rate-path trend measure (for series that are ALREADY rates)."""
+
+    def test_level_excess_skips_yoy(self) -> None:
+        # A constant rate has zero excess (equals its own average).
+        idx = pd.bdate_range("2010-01-01", periods=600)
+        flat = pd.Series(2.0, index=idx)
+        excess = InflationTrend._level_excess(flat)
+        # After warm-up, a constant series sits exactly at its rolling mean -> 0
+        assert np.isclose(excess.dropna().iloc[-1], 0.0)
+
+    def test_level_excess_positive_when_above_trend(self) -> None:
+        idx = pd.bdate_range("2010-01-01", periods=900)
+        # Rate steady at 2, then jumps to 4 -> should be above its trailing mean
+        vals = [2.0] * 600 + [4.0] * 300
+        s = pd.Series(vals, index=idx)
+        excess = InflationTrend._level_excess(s)
+        assert excess.iloc[-1] > 0, "Rate above its recent average -> positive excess"
+
+
+class TestInflationScore:
+    """The composite inflation score combines index and rate indicators."""
+
+    def test_surge_is_positive(self) -> None:
+        macro = _macro_with_inflation()
+        sig = InflationTrend(index_indicators=("CPIAUCSL",), rate_indicators=("T5YIE",))
+        score = sig._compute_inflation_score(macro)
+        # During the surge (year 6+), the score should be clearly positive.
+        surge = score.loc["2016-06-01":"2017-12-31"].mean()
+        assert surge > 0, "Inflation surge should give a positive composite score"
+
+    def test_uses_both_index_and_rate_paths(self) -> None:
+        """Both an index indicator and a rate indicator should contribute."""
+        macro = _macro_with_inflation()
+        # With both
+        both = InflationTrend(
+            index_indicators=("CPIAUCSL",), rate_indicators=("T5YIE",)
+        )._compute_inflation_score(macro)
+        # Index only
+        index_only = InflationTrend(
+            index_indicators=("CPIAUCSL",), rate_indicators=()
+        )._compute_inflation_score(macro)
+        # Adding the rate path should change the composite (it's averaged in).
+        assert not both.equals(index_only), (
+            "The rate indicator should contribute to the composite score"
+        )
+
+
+class TestInflationBetaMapping:
+    """Inflation hedges load positive; inflation-bearish assets negative."""
+
+    def test_hedge_positive_equity_negative(self) -> None:
+        macro = _macro_with_inflation()
+        prices = pd.DataFrame(
+            {"GLD": 1.0, "SPY": 1.0, "HYG": 1.0},  # hedge, bearish, neutral
+            index=macro.index,
+        )
+        sig = InflationTrend(index_indicators=("CPIAUCSL",), rate_indicators=("T5YIE",))
+        scores = sig.compute(prices, macro)
+        last = scores.iloc[-1]
+        # During the surge, GLD (hedge) > 0, SPY (bearish) < 0, HYG (neutral) NaN
+        assert last["GLD"] > 0, "Gold (inflation hedge) should be positive in a surge"
+        assert last["SPY"] < 0, "Equities (inflation-bearish) should be negative"
+        assert np.isnan(last["HYG"]), "Neutral-beta asset should abstain (NaN)"
+
+    def test_gld_differs_from_growth(self) -> None:
+        """GLD is +1 for inflation but 0 for growth — the maps genuinely differ."""
+        from atlas.signals.macro_trend import GrowthTrend
+        assert InflationTrend.DEFAULT_INFLATION_BETAS["GLD"] == 1.0
+        assert GrowthTrend.DEFAULT_GROWTH_BETAS["GLD"] == 0.0
+
+
+class TestInflationNormalization:
+    def test_normalization_mode_is_time_series(self) -> None:
+        assert InflationTrend().normalization == "time_series"
