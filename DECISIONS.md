@@ -37,3 +37,29 @@ the blend roster is: **TSMomentum, BondCarry, FXCarry, InflationTrend.**
 looked weak/dead on full-sample IC; regime splits revealed inflation has a real
 conditional edge (kept) and growth has a structural failure mode (dropped).
 Evaluate macro signals regime-conditionally, not just full-sample.
+
+## Phase 2 — Signal tuning (Stage 2.5 follow-up)
+
+**Momentum (lookback, skip_days) — defaults CONFIRMED, no change.**
+- Tested lookbacks {21, 63, 126, 252} × skip_days {0, 5, 21} via IC decay.
+- Longer lookbacks clearly predict longer horizons better (126/252 dominate
+  21/63 at the 126d/252d horizons); 21-day lookback is weakest throughout.
+  Pattern is robust across all skip values. Confirms lookback=252 default.
+- skip_days has negligible effect (252-lookback/252-horizon IC: 0.091/0.092/
+  0.093 for skip 0/5/21) — short-term reversal is weak in broad ETF baskets,
+  so the single-stock "skip recent month" convention doesn't transfer. Keep
+  skip_days=0.
+
+**InflationTrend — breakeven up-weighted to 50% (was equal-weight 25%).**
+- Component IC isolation: breakeven_only (T5YIE) high-inflation IC @21d = 0.140
+  vs realized_only (CPI/coreCPI/PCE) = 0.065. Breakeven is also the only
+  component net-positive full-sample. Forward-looking market expectations
+  predict far better than backward-looking, lagged realized prints.
+- Chose breakeven_weight=0.5 (Option A: up-weight, retain realized as a
+  cross-regime diversifier) over breakeven-only, to avoid over-fitting to the
+  single 2021-2023 inflation episode.
+- Fixed a NaN-handling bug found during testing: weighted combination now
+  renormalizes per-date over present (non-NaN) components, so a component in
+  its expanding-zscore warm-up doesn't silently halve the composite. This
+  per-date weight-renormalization pattern applies to ANY combination of
+  components with different start dates — relevant to Phase 4 signal blending.

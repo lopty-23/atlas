@@ -156,6 +156,7 @@ class InflationTrend(Signal):
         index_indicators: tuple[str, ...] | None = None,
         rate_indicators: tuple[str, ...] | None = None,
         inflation_betas: dict[str, float] | None = None,
+        breakeven_weight: float = 0.5,
         min_periods: int = 252,
         name: str | None = None,
     ) -> None:
@@ -169,6 +170,16 @@ class InflationTrend(Signal):
             else self.DEFAULT_RATE_INDICATORS
         )
         self.inflation_betas = inflation_betas or dict(self.DEFAULT_INFLATION_BETAS)
+        if not 0.0 <= breakeven_weight <= 1.0:
+            raise ValueError(
+                f"breakeven_weight must be in [0, 1], got {breakeven_weight}"
+            )
+        # Collective weight on the rate (breakeven) indicators; the realized
+        # index indicators share the remainder. Tuning (Stage 2.5) showed the
+        # forward-looking breakeven (T5YIE) carries most of the predictive power
+        # (regime IC ~0.14 vs ~0.06 for realized), so it is up-weighted, while
+        # the realized series are retained as minor cross-regime diversifiers.
+        self.breakeven_weight = breakeven_weight
         self.min_periods = min_periods
 
     @staticmethod
@@ -177,26 +188,56 @@ class InflationTrend(Signal):
         return series - baseline
 
     def _compute_inflation_score(self, macro: pd.DataFrame) -> pd.Series:
-        zscored_trends = []
-
+        index_z: list[pd.Series] = []
         for indicator in self.index_indicators:
             if indicator not in macro.columns:
                 continue
             trend = GrowthTrend._yoy_excess(macro[indicator])
-            z = GrowthTrend._expanding_zscore(trend, self.min_periods)
-            zscored_trends.append(z)
+            index_z.append(GrowthTrend._expanding_zscore(trend, self.min_periods))
 
+        rate_z: list[pd.Series] = []
         for indicator in self.rate_indicators:
             if indicator not in macro.columns:
                 continue
             trend = self._level_excess(macro[indicator])
-            z = GrowthTrend._expanding_zscore(trend, self.min_periods)
-            zscored_trends.append(z)
+            rate_z.append(GrowthTrend._expanding_zscore(trend, self.min_periods))
 
-        if not zscored_trends:
+        if not index_z and not rate_z:
             return pd.Series(index=macro.index, dtype=float)
 
-        composite = pd.concat(zscored_trends, axis=1).mean(axis=1)
+        # Assign each component its weight, then combine with PER-DATE
+        # renormalization: on any date where some components are NaN (e.g. a
+        # series still in its expanding-zscore warm-up), the present components'
+        # weights are rescaled to sum to 1. Without this, a NaN component's
+        # weight would silently vanish (sum-skips-NaN) and shrink the composite.
+        components: list[pd.Series] = []
+        weights: list[float] = []
+
+        if index_z and rate_z:
+            w_rate = self.breakeven_weight / len(rate_z)
+            w_index = (1.0 - self.breakeven_weight) / len(index_z)
+            components += index_z
+            weights += [w_index] * len(index_z)
+            components += rate_z
+            weights += [w_rate] * len(rate_z)
+        elif rate_z:
+            components += rate_z
+            weights += [1.0 / len(rate_z)] * len(rate_z)
+        else:
+            components += index_z
+            weights += [1.0 / len(index_z)] * len(index_z)
+
+        comp_frame = pd.concat(components, axis=1)
+        comp_frame.columns = range(len(components))  # ensure unique col labels
+        w = pd.Series(weights, index=comp_frame.columns)
+
+        # Weighted sum of present components, divided by the sum of weights of
+        # the present (non-NaN) components on each date -> a proper weighted
+        # average that always uses weights summing to 1 over what's available.
+        present = comp_frame.notna()
+        weighted_sum = (comp_frame * w).sum(axis=1, min_count=1)
+        present_weight = present.mul(w, axis=1).sum(axis=1)
+        composite = weighted_sum / present_weight.replace(0.0, pd.NA)
         return composite
 
     def _compute_raw(self, prices: pd.DataFrame, macro: pd.DataFrame) -> pd.DataFrame:

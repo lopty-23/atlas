@@ -241,3 +241,46 @@ class TestInflationBetaMapping:
 class TestInflationNormalization:
     def test_normalization_mode_is_time_series(self) -> None:
         assert InflationTrend().normalization == "time_series"
+
+class TestInflationWeighting:
+    """The breakeven up-weighting."""
+
+    def test_breakeven_weight_validated(self) -> None:
+        import pytest
+        with pytest.raises(ValueError, match="breakeven_weight"):
+            InflationTrend(breakeven_weight=1.5)
+
+    def test_composite_is_bounded_by_components(self) -> None:
+        """A weighted average (weights summing to 1) must lie between the min
+        and max of its component inputs on every date. This holds regardless of
+        the inputs' magnitude, so it's the correct test of the weighting (the
+        earlier 'magnitude < 10' bound was wrong: on synthetic data with a sharp
+        regime break, the expanding z-scores legitimately get large)."""
+        macro = _macro_with_inflation()
+        sig = InflationTrend(
+            index_indicators=("CPIAUCSL",), rate_indicators=("T5YIE",),
+            breakeven_weight=0.5,
+        )
+        # Reconstruct the two component z-scores the signal averages.
+        from atlas.signals.macro_trend import GrowthTrend
+        cpi_z = GrowthTrend._expanding_zscore(
+            GrowthTrend._yoy_excess(macro["CPIAUCSL"]), 252
+        )
+        be_z = GrowthTrend._expanding_zscore(
+            sig._level_excess(macro["T5YIE"]), 252
+        )
+        components = pd.concat([cpi_z, be_z], axis=1)
+        lo = components.min(axis=1)
+        hi = components.max(axis=1)
+
+        composite = sig._compute_inflation_score(macro)
+
+        # On every date where all three are defined, composite ∈ [lo, hi].
+        valid = composite.notna() & lo.notna() & hi.notna()
+        c, l, h = composite[valid], lo[valid], hi[valid]
+        # Small tolerance for floating point.
+        assert (c >= l - 1e-9).all(), "composite fell below the min component"
+        assert (c <= h + 1e-9).all(), "composite exceeded the max component"
+
+    def test_default_breakeven_weight_is_half(self) -> None:
+        assert InflationTrend().breakeven_weight == 0.5
