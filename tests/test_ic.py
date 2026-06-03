@@ -17,6 +17,7 @@ from atlas.evaluation.ic import (
     compute_ic_timeseries,
     compute_icir,
     compute_rolling_ic,
+    compute_quintile_returns,
 )
 
 def _random_prices(n_dates: int = 400, n_assets: int = 20, seed: int = 0) -> pd.DataFrame:
@@ -218,3 +219,39 @@ class TestICDecay:
         )
         decay = compute_ic_decay(signal, prices, horizons=(1, 21), include_icir=True)
         assert {"mean_ic", "icir", "t_stat", "n_obs"} <= set(decay.columns)
+
+class TestQuintileReturns:
+    """Bucket forward returns by signal; check monotonicity and the spread."""
+
+    def test_monotonic_buckets_for_predictive_signal(self) -> None:
+        """A signal that leads the return should produce higher returns in
+        higher buckets (a monotonic staircase) and a positive spread."""
+        ret = _random_returns(n_dates=400, n_assets=25, seed=8)
+        signal = ret.shift(-1)  # lead-shifted so the internal lag aligns it
+        result = compute_quintile_returns(signal, ret, n_buckets=5)
+        br = result["bucket_returns"]
+        # Top bucket should out-earn bottom bucket; spread positive.
+        assert br.loc[5] > br.loc[1], "Top signal bucket should out-earn the bottom"
+        assert result["spread"] > 0
+
+    def test_noise_signal_near_zero_spread(self) -> None:
+        ret = _random_returns(n_dates=400, n_assets=25, seed=9)
+        rng = np.random.default_rng(123)
+        signal = pd.DataFrame(
+            rng.normal(0, 1, size=ret.shape), index=ret.index, columns=ret.columns
+        )
+        result = compute_quintile_returns(signal, ret, n_buckets=5)
+        # Noise -> spread indistinguishable from zero.
+        assert abs(result["spread"]) < 0.001
+
+    def test_two_group_signal_adapts_buckets(self) -> None:
+        """A signal with only two distinct values (like the macro signals)
+        should yield a 2-bucket comparison, not error on requesting 5."""
+        ret = _random_returns(n_dates=400, n_assets=20, seed=10)
+        # Two-group signal: half the assets +1, half -1, constant over time,
+        # constructed to lead the return so the +1 group earns more.
+        signal = ret.shift(-1).apply(lambda row: pd.Series(
+            np.where(row >= row.median(), 1.0, -1.0), index=row.index), axis=1)
+        result = compute_quintile_returns(signal, ret, n_buckets=5)
+        # Only 2 distinct values -> buckets capped at 2.
+        assert len(result["bucket_returns"]) == 2

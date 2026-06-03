@@ -203,3 +203,75 @@ def compute_ic_decay(
     decay = pd.DataFrame.from_dict(rows, orient="index")
     decay.index.name = "horizon"
     return decay
+
+def compute_quintile_returns(
+    signal: pd.DataFrame,
+    fwd_returns: pd.DataFrame,
+    n_buckets: int = 5,
+    min_assets: int | None = None,
+    lag: int = 1,
+) -> dict[str, object]:
+    """Average forward return by signal bucket — the return-based cross-check."""
+    if min_assets is None:
+        min_assets = n_buckets  # need at least one asset per bucket
+
+    lagged = signal.shift(lag)
+    common_cols = lagged.columns.intersection(fwd_returns.columns)
+    sig = lagged[common_cols]
+    ret = fwd_returns.reindex(index=lagged.index, columns=common_cols)
+
+    # Accumulate per-bucket forward returns across dates.
+    bucket_sums: dict[int, float] = {}
+    bucket_counts: dict[int, int] = {}
+    spread_values: list[float] = []
+    n_dates = 0
+
+    for date in sig.index:
+        s_row = sig.loc[date]
+        r_row = ret.loc[date]
+        valid = s_row.notna() & r_row.notna()
+        if valid.sum() < min_assets:
+            continue
+        s_valid = s_row[valid]
+        r_valid = r_row[valid]
+
+        # Cap buckets at the number of distinct signal values (ties can't be
+        # split). With only 2 distinct values (macro signals), this yields a
+        # clean 2-group comparison.
+        k = min(n_buckets, s_valid.nunique())
+        if k < 2:
+            continue  # no variation -> can't bucket
+
+        # Rank assets into k buckets by signal (labels 1..k, k = highest).
+        try:
+            buckets = pd.qcut(s_valid.rank(method="first"), q=k, labels=False) + 1
+        except ValueError:
+            continue  # qcut can fail on pathological ties; skip the date
+
+        date_bucket_ret: dict[int, float] = {}
+        for b in range(1, k + 1):
+            mask = buckets == b
+            if mask.any():
+                br = r_valid[mask].mean()
+                bucket_sums[b] = bucket_sums.get(b, 0.0) + br
+                bucket_counts[b] = bucket_counts.get(b, 0) + 1
+                date_bucket_ret[b] = br
+
+        # Spread = top bucket minus bottom bucket, when both exist this date.
+        if 1 in date_bucket_ret and k in date_bucket_ret:
+            spread_values.append(date_bucket_ret[k] - date_bucket_ret[1])
+        n_dates += 1
+
+    bucket_returns = pd.Series(
+        {b: bucket_sums[b] / bucket_counts[b] for b in sorted(bucket_sums)},
+        name="mean_fwd_return",
+    )
+    bucket_returns.index.name = "bucket"
+
+    spread = float(np.mean(spread_values)) if spread_values else float("nan")
+
+    return {
+        "bucket_returns": bucket_returns,
+        "spread": spread,
+        "n_dates": n_dates,
+    }
