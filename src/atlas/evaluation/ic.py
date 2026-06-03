@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from atlas.data.returns import forward_returns
 
 # Minimum assets with both a signal and a return on a date, for that date's
 # cross-sectional correlation to be meaningful. Below this, the date is skipped.
@@ -156,3 +157,49 @@ def compute_icir(
         "t_stat": float(t_stat),
         "n_obs": float(n),
     }
+
+DEFAULT_DECAY_HORIZONS = (1, 5, 21, 63, 126, 252)
+
+
+def compute_ic_decay(
+    signal: pd.DataFrame,
+    prices: pd.DataFrame,
+    horizons: tuple[int, ...] = DEFAULT_DECAY_HORIZONS,
+    method: str = "spearman",
+    min_assets: int = MIN_ASSETS_PER_DATE,
+    lag: int = 1,
+    include_icir: bool = True,
+) -> pd.DataFrame:
+    """IC (and ICIR) at a range of forward horizons — the decay curve.
+
+    For each horizon h, build h-day forward returns from `prices` and compute
+    the mean IC of the signal against them. The shape of mean IC vs horizon
+    reveals the signal's natural holding period: trend signals peak at longer
+    horizons (63-252d), reversal signals at short ones (1-5d), and slow macro
+    signals may only show meaningful IC at longer horizons.
+    """
+    rows: dict[int, dict[str, float]] = {}
+
+    for h in horizons:
+        fwd = forward_returns(prices, horizon=h)
+
+        if include_icir:
+            stats = compute_icir(
+                signal, fwd, horizon=h, method=method,
+                min_assets=min_assets, lag=lag, annualize=True,
+            )
+            rows[h] = {
+                "mean_ic": stats["mean_ic"],
+                "icir": stats["icir"],
+                "t_stat": stats["t_stat"],
+                "n_obs": stats["n_obs"],
+            }
+        else:
+            mean_ic = compute_ic(
+                signal, fwd, method=method, min_assets=min_assets, lag=lag
+            )
+            rows[h] = {"mean_ic": mean_ic}
+
+    decay = pd.DataFrame.from_dict(rows, orient="index")
+    decay.index.name = "horizon"
+    return decay

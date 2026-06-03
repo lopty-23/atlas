@@ -13,10 +13,35 @@ import pandas as pd
 
 from atlas.evaluation.ic import (
     compute_ic,
+    compute_ic_decay,
     compute_ic_timeseries,
     compute_icir,
     compute_rolling_ic,
 )
+
+def _random_prices(n_dates: int = 400, n_assets: int = 20, seed: int = 0) -> pd.DataFrame:
+    """Random-walk prices (cumulative product of small random returns)."""
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("2015-01-01", periods=n_dates)
+    cols = [f"A{i}" for i in range(n_assets)]
+    rets = rng.normal(0, 0.01, size=(n_dates, n_assets))
+    prices = 100.0 * np.cumprod(1.0 + rets, axis=0)
+    return pd.DataFrame(prices, index=idx, columns=cols)
+
+
+def _trending_prices(n_dates: int = 400, n_assets: int = 20, seed: int = 0) -> pd.DataFrame:
+    """Prices with persistent per-asset drift, so momentum is predictive.
+
+    Each asset gets a fixed random drift; the ones drifting up keep drifting up,
+    so trailing momentum predicts forward returns (a clean trend to detect)."""
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("2015-01-01", periods=n_dates)
+    cols = [f"A{i}" for i in range(n_assets)]
+    drifts = rng.normal(0, 0.0008, size=n_assets)  # persistent per-asset drift
+    noise = rng.normal(0, 0.005, size=(n_dates, n_assets))
+    rets = drifts[None, :] + noise
+    prices = 100.0 * np.cumprod(1.0 + rets, axis=0)
+    return pd.DataFrame(prices, index=idx, columns=cols)
 
 def _random_returns(n_dates: int = 300, n_assets: int = 20, seed: int = 0) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
@@ -155,3 +180,41 @@ class TestICIR:
         assert hac_se > naive_se, (
             "Under positive autocorrelation, HAC SE must exceed the naive SE"
         )
+
+class TestICDecay:
+    """The decay curve: IC across multiple forward horizons."""
+
+    def test_decay_has_row_per_horizon(self) -> None:
+        prices = _random_prices()
+        signal = pd.DataFrame(
+            np.random.default_rng(0).normal(0, 1, size=prices.shape),
+            index=prices.index, columns=prices.columns,
+        )
+        decay = compute_ic_decay(signal, prices, horizons=(1, 5, 21))
+        assert list(decay.index) == [1, 5, 21]
+        assert "mean_ic" in decay.columns
+
+    def test_longer_horizon_peak_for_persistent_signal(self) -> None:
+        """A signal built to predict the LONGER-horizon return should show its
+        strongest IC at the longer horizon, not the 1-day."""
+        prices = _trending_prices()
+        # Signal = trailing momentum (price now vs 60 days ago). For a trending
+        # series this predicts longer-horizon forward returns better than 1-day.
+        from atlas.data.returns import trailing_returns
+        signal = trailing_returns(prices, lookback=60)
+        decay = compute_ic_decay(
+            signal, prices, horizons=(1, 63), include_icir=False
+        )
+        assert decay.loc[63, "mean_ic"] > decay.loc[1, "mean_ic"], (
+            "A momentum signal on trending prices should predict the 63-day "
+            "return better than the 1-day return"
+        )
+
+    def test_icir_columns_present_when_requested(self) -> None:
+        prices = _random_prices()
+        signal = pd.DataFrame(
+            np.random.default_rng(1).normal(0, 1, size=prices.shape),
+            index=prices.index, columns=prices.columns,
+        )
+        decay = compute_ic_decay(signal, prices, horizons=(1, 21), include_icir=True)
+        assert {"mean_ic", "icir", "t_stat", "n_obs"} <= set(decay.columns)
