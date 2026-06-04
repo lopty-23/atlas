@@ -237,7 +237,7 @@ class InflationTrend(Signal):
         present = comp_frame.notna()
         weighted_sum = (comp_frame * w).sum(axis=1, min_count=1)
         present_weight = present.mul(w, axis=1).sum(axis=1)
-        composite = weighted_sum / present_weight.replace(0.0, pd.NA)
+        composite = weighted_sum / present_weight.replace(0.0, float("nan"))
         return composite
 
     def _compute_raw(self, prices: pd.DataFrame, macro: pd.DataFrame) -> pd.DataFrame:
