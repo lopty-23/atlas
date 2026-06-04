@@ -12,14 +12,11 @@ import yaml
 import pandas as pd
 
 from atlas.data.point_in_time import build_pit_macro
-from atlas.signals.momentum import TSMomentum
-from atlas.signals.carry import BondCarry, FXCarry
-from atlas.signals.macro_trend import InflationTrend
+from atlas.portfolio.roster import build_roster, ROSTER_SCALES
 from atlas.portfolio.blend import blend_signals
 
 pd.set_option("display.float_format", lambda v: f"{v:.4f}")
 
-SCALES = {"InflationTrend": 2.0}
 SPOT_CHECKS = [("SPY", "2004-06-01"), ("IEF", "2022-06-01")]
 
 
@@ -36,16 +33,14 @@ def main() -> None:
 
     # 4-signal roster (GrowthTrend dropped). BondCarry takes dividends +
     # unadjusted prices via constructor, exactly as in evaluate_signals.py.
-    signals = {
-        "TSMomentum": TSMomentum().compute(prices, macro),
-        "BondCarry": BondCarry(
-            dividends=dividends, prices_unadjusted=prices_unadj
-        ).compute(prices, macro),
-        "FXCarry": FXCarry().compute(prices, macro),
-        "InflationTrend": InflationTrend().compute(prices, macro),
-    }
-
-    composite = blend_signals(signals, scales=SCALES)
+    signals = build_roster(
+        prices=prices,
+        prices_unadjusted=prices_unadj,
+        dividends=dividends,
+        macro=macro,
+    )
+    
+    composite = blend_signals(signals, scales=ROSTER_SCALES)
     print("dtypes:", {n: str(s.values.dtype) for n, s in signals.items()},
           "| composite:", composite.values.dtype)
     aligned = {name: signals[name].reindex_like(composite) for name in signals}
@@ -76,7 +71,7 @@ def main() -> None:
         row = composite.index.asof(pd.Timestamp(date))
         print(f"\n{asset} @ {row.date()}:")
         for name in signals:
-            scale = SCALES.get(name, 1.0)
+            scale = ROSTER_SCALES.get(name, 1.0)
             v = aligned[name].loc[row, asset]
             note = f"   (/{scale:g} = {v / scale:.4f})" if scale != 1.0 else ""
             print(f"  {name:15s}: {v:8.4f}{note}")
