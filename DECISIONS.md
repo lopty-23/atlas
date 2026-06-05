@@ -63,3 +63,63 @@ Evaluate macro signals regime-conditionally, not just full-sample.
   its expanding-zscore warm-up doesn't silently halve the composite. This
   per-date weight-renormalization pattern applies to ANY combination of
   components with different start dates — relevant to Phase 4 signal blending.
+
+## Phase 4 — Portfolio vol-targeting (Step C) uses an explicit rolling covariance
+
+**Decision.** Estimate the portfolio's ex-ante vol for vol-targeting via an
+explicit trailing rolling covariance (`returns.rolling(126).cov()`), contracted
+against the current weights as w^T Sigma w, vectorized (no per-date loop).
+Window = 126 (same as inverse-vol). Target = 10% annualized.
+
+**Alternative considered.** A "matrix-free" form: synthesize the portfolio
+return stream by applying current weights to past returns, take its rolling std.
+Computes the identical number without materializing Sigma.
+
+**Rationale.** Both give the same w^T Sigma w. The matrix-free form was initially
+preferred to avoid estimating a noisy 21x21 covariance. On reflection that
+argument was overstated *for this use*: covariance-estimation noise is harmful
+when you OPTIMIZE against Sigma (off-diagonal errors push weights around), but
+Step C only MEASURES a scalar (today's book vol) -- it never inverts or optimizes
+Sigma. For a pure measurement the matrix is harmless, and the explicit-covariance
+code is clearer and less error-prone than the fixed-weights-rolling-std
+contortion. At 21 assets the matrix carries no performance cost.
+
+The anti-noise prior still correctly governs SIZING (inverse-vol over full ERC,
+per DeMiguel); it simply does not bite on a measurement.
+
+**Point-in-time.** Covariance uses only trailing returns; weights are current.
+The execution lag is applied later (backtest), never here.
+
+## Phase 4 — Long-short book is NOT demeaned (net inflation tilt retained)
+
+**Decision.** In `sizing.py` Stage A, the long_short composite passes through
+unchanged -- we do NOT cross-sectionally demean it to force dollar-neutrality.
+The book therefore carries whatever net long/short exposure the composite
+implies.
+
+**Where the net exposure comes from.** Three of the four signals (TSMomentum,
+BondCarry, FXCarry) are cross-sectionally z-scored, so each is mean-zero across
+its assets every day and contributes ~zero net exposure by construction. The
+ONLY net-exposure source is InflationTrend: it is beta-mapped (not z-scored) and
+its betas sum to ~-4 across the universe (+1 on six assets, -1 on ten, 0 on
+five). So the book's net tilt is, in effect, the inflation signal's directional
+macro view: net short risk-assets-and-duration when inflation is rising, net
+long when disinflating.
+
+**Rationale.** Demeaning would strip out exactly that view -- and the inflation
+signal leaning the book net-short in an inflation shock IS the protection we
+chose to keep (consistent with retaining InflationTrend at all, and with the
+shape-preserving rescale rather than re-z-scoring). The tilt is modest on
+average and economically coherent, not an artifact.
+
+**Empirical check (build_sizing.py, long_short).** Net exposure mean +0.46,
+ranging -2.15 (inflationary stretches, net short) to +1.98. Near-neutral on
+average with the expected negative excursions when inflation is live -- the
+designed behavior, made visible.
+
+**Flagged for attribution.** A net directional tilt contributes more vol per
+unit gross than an offsetting relative-value spread, so the tilt may punch above
+its blend-weight share in inflation regimes. Whether it stays modest or starts
+dominating book RISK is an empirical question for performance attribution
+(decompose net-exposure vol vs relative-value vol). If it dominates, demeaning
+is a one-line switch to flip -- WITH evidence, not pre-emptively.
