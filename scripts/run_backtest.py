@@ -15,6 +15,7 @@ from atlas.portfolio.blend import blend_signals
 from atlas.portfolio.sizing import compute_target_weights
 from atlas.portfolio.risk import apply_risk_limits
 from atlas.backtest.engine import run_backtest
+from atlas.backtest.performance import summarize
 
 pd.set_option("display.float_format", lambda v: f"{v:.4f}")
 TRADING_DAYS = 252
@@ -59,7 +60,11 @@ def main() -> None:
         print(f"Ann turnover     : {ann_to:.2f}x gross/year")
         print(f"Ann cost drag    : {cost_drag * 1e4:.1f} bps/year")
         print()
-
+        s = summarize(r_live, rf)
+        print(f"Sharpe {s['sharpe']:.2f}  Sortino {s['sortino']:.2f}  "
+              f"CAGR {s['cagr']:.2%}  MaxDD {s['max_drawdown']:.2%}  "
+              f"Calmar {s['calmar']:.2f}  TUW {s['time_underwater_days']}d  "
+              f"Hit {s['hit_rate']:.1%}")
 
 if __name__ == "__main__":
     main()
