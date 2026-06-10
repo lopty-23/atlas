@@ -127,40 +127,60 @@ is a one-line switch to flip -- WITH evidence, not pre-emptively.
 ## Phase 4 — Risk limit values (literature-anchored anti-domination backstops)
 
 **Decision.** risk.py applies three static caps to sizing's gross-unconstrained
-weights, all measured as fractions of TARGET gross (max_gross) → fixed absolute 
-thresholds (per-asset 0.60, per-bucket 1.50):
+weights. Per-asset and per-bucket caps are fractions of TARGET gross
+(max_gross), making them FIXED ABSOLUTE thresholds independent of the book's
+realized gross or concentration:
 
-| Cap          | Value | Role                                              |
-|--------------|-------|---------------------------------------------------|
-| max_position | 0.20  | No single asset dominates (rarely binds)          |
-| max_bucket   | 0.50  | No risk bucket dominates (uniform across buckets) |
-| max_gross    | 3.0   | Gross leverage tail backstop                      |
+| Cap          | Value | Absolute (x max_gross) | Role                          |
+|--------------|-------|------------------------|-------------------------------|
+| max_position | 0.20  | 0.60                   | No single asset dominates     |
+| max_bucket   | 0.50  | 1.50                   | No risk bucket dominates      |
+| max_gross    | 3.0   | (itself)               | Gross leverage tail backstop  |
 
-Enforced by PROPORTIONAL SCALING (not clipping) for the bucket and leverage
-caps, so the signal's relative view WITHIN a bucket / across the book is
-preserved. Single-name breaches of max_position are the one clip (a ratio can't 
-be preserved against itself). Order: per-asset -> bucket -> leverage, applied once 
-each; leverage last because scaling the whole book preserves all inner ratios and 
-per-position gross fractions, so it cannot re-violate the inner two (the one 
-self-consistent order).
+Enforced by PROPORTIONAL SCALING for the bucket and leverage caps, preserving
+the signal's relative view within a bucket / across the book -- caps control the
+SIZE of a bet, not WHICH bet. Single-name breaches of max_position are trimmed
+(clip == scale for one position). Order: per-asset -> bucket -> leverage,
+applied once each. Leverage last is exact, not approximate: uniform whole-book
+scaling only REDUCES each |w|, and reducing a value already at-or-under a fixed
+absolute cap cannot push it back over. All caps only reduce; freed capital goes
+to cash (book may run under its vol target on capped days), never into uncapped
+names (which would re-concentrate).
 
-**Rationale.** All three are anti-domination backstops, not active position
-shapers. Values chosen to let the signal play out as much as possible: per-asset 
-(0.20) and per-bucket (0.50) are deliberately loose so they rarely bind on the 
-already-diversified ~19-asset inverse-vol book; only the leverage cap is set to 
-actively bind.
+**Why fractions of TARGET gross, not realized gross (the B2 choice).** The
+first implementation capped against realized gross (sum|w| of the day's book).
+The build_risk.py diagnostic caught this as broken on real data: a
+fraction-of-realized-gross cap is SELF-REFERENTIAL and infeasible on
+concentrated books -- on a long-only defensive day the book can collapse to one
+surviving name, which is 100% of its own gross no matter how much you trim it
+(post-cap max position read 1.000, the cap silently doing nothing exactly when
+the book was most concentrated). Capping against the fixed target gross makes
+the thresholds absolute (0.60 / 1.50), always feasible, and stable: "never bet
+more than X of intended capital on one name," where the reference does not move
+when you trim. Realized-gross fractions in diagnostics remain informational
+only; the enforced quantity is absolute weight.
 
-Per-bucket is UNIFORM (0.50 for every bucket). If attribution later shows one 
-bucket needs a tighter leash, we will tighten that one with evidence.
+**Rationale for the values.** All three are anti-domination backstops, not
+active position shapers -- the vol-target (sizing) controls expected risk; these
+bound TAIL/concentration risk when the trailing-vol estimate is wrong. Values
+chosen to "let the signal play out as much as possible": per-asset (0.20) and
+per-bucket (0.50) are deliberately loose so they rarely bind on the diversified
+~19-asset inverse-vol book; only the leverage cap is set to actively bind.
+
+Per-bucket is UNIFORM (0.50 for every bucket), not bespoke per class -- bespoke
+caps would encode a view on which classes "deserve" more room, an overfitting
+trap. If attribution later shows one bucket needs a tighter leash, tighten THAT
+one with evidence.
 
 **Leverage cap (3.0) -- why this value.** Sizing's gross (build_sizing.py,
 long_short) runs mean 2.58, p95 4.14, max 6.07. 3.0 leaves the median book
 (2.55) untouched, lightly trims the upper quartile, and hard-stops the dangerous
-4-6x tail -- which are the LOW-trailing-vol-estimate days the cap exists to catch
-(the failure that blew up naive risk-parity in Mar-2020 and managed futures in
-2022). A 2.0 cap would bind >50% of days and override the vol-target (making the
-leverage cap the de-facto sizer); 5.0+ would never catch the tail. 3.0 backstops
-the tail while leaving the vol-target alone in normal conditions.
+4-6x tail -- the LOW-trailing-vol-estimate days the cap exists to catch (the
+failure that blew up naive risk-parity in Mar-2020 and managed futures in 2022).
+A 2.0 cap would bind >50% of days and override the vol-target (making the
+leverage cap the de-facto sizer); 5.0+ would never catch the tail. Verified on
+real data (build_risk.py): binds 33.9% of long-short days, 1.7% long-only;
+post-cap absolute max position 0.600 and max bucket 1.500, exact in both modes.
 
 **Literature anchors.** Per-asset ~10-20% and per-class ~50% are standard
 diversified-mandate / balanced-fund conventions (the latter a tightening vs
@@ -168,9 +188,50 @@ diversified-mandate / balanced-fund conventions (the latter a tightening vs
 band for hitting ~10% vol across low-vol assets (Bridgewater All Weather, AQR).
 The leverage-cap-as-tail-backstop framing follows Lopez de Prado.
 
-**Flagged for sensitivity check.** These are priors from literature, not fitted
-to atlas. They will shape results -- the 3.0 leverage cap disproportionately
+**Flagged for sensitivity check.** These are PRIORS from literature, NOT fitted
+to atlas. They WILL shape results -- the 3.0 leverage cap disproportionately
 trims the highest-gross days, which are the inflation-tilt days (net exposure to
 -2.15). Sensitivity-sweep all three in the backtest ("small parameter changes ->
 small performance changes" robustness, per the research doc); all three live in
 universe.yaml (risk_limits) for trivial tuning.
+
+## Phase 4 — Backtest engine conventions and flagged simplifications
+
+**Decision.** engine.py simulates daily target weights with: execution lag
+(targets read at rebalance t earn returns from t+1 -- the lag lives HERE and
+nowhere else; blend/sizing/risk never shift), monthly rebalance (last trading
+day per month), drift between rebalances (positions held, weights move with
+relative returns: w_i <- w_i(1+r_i)/(1+r_p); turnover measured against the
+DRIFTED book, not stale targets), costs at 1bp per side on one-way traded
+notional (~2bp round-trip, mid-range of the 1-3bp ETF band; parameterized),
+and a cash/financing leg: r_p = sum(w_i r_i) + (1 - net) * rf, rf = DGS3MO
+(point-in-time, /100/252).
+
+**FLAGGED simplification -- same-rate financing, no borrow fees.** The cash leg
+lends AND borrows at rf, with no short-borrow fees. Research convention, but it
+flatters the long-short book: real margin costs rf-plus-spread, and shorts in
+HYG/EMB/EEM carry borrow fees. Long-short results lean optimistic on financing.
+A financing-spread parameter is an easy later refinement; revisit before any
+live-relevance claim.
+
+**No drawdown throttle in v1.** Path-dependent (needs the running equity
+curve), so it could not live in risk.py; deliberately EXCLUDED from engine v1 to
+keep the core loop's testing surface clean and to establish the unconditional
+baseline a throttle would be judged against. Deferred as an optional overlay
+with its own design pass (throttle level / action are free parameters).
+
+**Empirical flags from the first full run (run_backtest.py, 1bp costs):**
+- Realized vol OVERSHOOTS target: 0.1063 long-short, 0.1161 long-only vs 0.10.
+  Trailing-window vol-targeting under-estimates forward vol when vol spikes
+  (vol clusters; the 126d estimate lags, monthly rebalance adds staleness) --
+  this beat the opposing effect (leverage cap trimming). Long-only worse
+  because a net-long book concentrates in the common risk-on factor, where
+  correlation spikes bite hardest. Within the normal +-20% band for this
+  machinery; re-examine at the performance/attribution stage.
+- Turnover ~10.1x gross/yr long-short, ~5.9x long-only (~4-4.4 full book turns
+  /yr, holding ~3 months). Higher than signal speed alone implies: the
+  vol-target scalar k_t rescales the WHOLE book monthly, the leverage cap
+  toggles, and inverse-vol weights shift -- sizing-layer turnover on top of
+  signal turnover. Cost-trivial at 1bp (~10 bps/yr drag) but DEFERRED:
+  decompose turnover (signal vs vol-scalar vs cap toggling) at the attribution
+  stage; if the scalar dominates, smooth k_t (e.g. re-scale only on >x% moves).
