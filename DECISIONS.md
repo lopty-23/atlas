@@ -123,3 +123,54 @@ its blend-weight share in inflation regimes. Whether it stays modest or starts
 dominating book RISK is an empirical question for performance attribution
 (decompose net-exposure vol vs relative-value vol). If it dominates, demeaning
 is a one-line switch to flip -- WITH evidence, not pre-emptively.
+
+## Phase 4 — Risk limit values (literature-anchored anti-domination backstops)
+
+**Decision.** risk.py applies three static caps to sizing's gross-unconstrained
+weights, all measured as fractions of TARGET gross (max_gross) → fixed absolute 
+thresholds (per-asset 0.60, per-bucket 1.50):
+
+| Cap          | Value | Role                                              |
+|--------------|-------|---------------------------------------------------|
+| max_position | 0.20  | No single asset dominates (rarely binds)          |
+| max_bucket   | 0.50  | No risk bucket dominates (uniform across buckets) |
+| max_gross    | 3.0   | Gross leverage tail backstop                      |
+
+Enforced by PROPORTIONAL SCALING (not clipping) for the bucket and leverage
+caps, so the signal's relative view WITHIN a bucket / across the book is
+preserved. Single-name breaches of max_position are the one clip (a ratio can't 
+be preserved against itself). Order: per-asset -> bucket -> leverage, applied once 
+each; leverage last because scaling the whole book preserves all inner ratios and 
+per-position gross fractions, so it cannot re-violate the inner two (the one 
+self-consistent order).
+
+**Rationale.** All three are anti-domination backstops, not active position
+shapers. Values chosen to let the signal play out as much as possible: per-asset 
+(0.20) and per-bucket (0.50) are deliberately loose so they rarely bind on the 
+already-diversified ~19-asset inverse-vol book; only the leverage cap is set to 
+actively bind.
+
+Per-bucket is UNIFORM (0.50 for every bucket). If attribution later shows one 
+bucket needs a tighter leash, we will tighten that one with evidence.
+
+**Leverage cap (3.0) -- why this value.** Sizing's gross (build_sizing.py,
+long_short) runs mean 2.58, p95 4.14, max 6.07. 3.0 leaves the median book
+(2.55) untouched, lightly trims the upper quartile, and hard-stops the dangerous
+4-6x tail -- which are the LOW-trailing-vol-estimate days the cap exists to catch
+(the failure that blew up naive risk-parity in Mar-2020 and managed futures in
+2022). A 2.0 cap would bind >50% of days and override the vol-target (making the
+leverage cap the de-facto sizer); 5.0+ would never catch the tail. 3.0 backstops
+the tail while leaving the vol-target alone in normal conditions.
+
+**Literature anchors.** Per-asset ~10-20% and per-class ~50% are standard
+diversified-mandate / balanced-fund conventions (the latter a tightening vs
+60/40's 60% equity); gross 2-3x is the classic risk-parity / managed-futures
+band for hitting ~10% vol across low-vol assets (Bridgewater All Weather, AQR).
+The leverage-cap-as-tail-backstop framing follows Lopez de Prado.
+
+**Flagged for sensitivity check.** These are priors from literature, not fitted
+to atlas. They will shape results -- the 3.0 leverage cap disproportionately
+trims the highest-gross days, which are the inflation-tilt days (net exposure to
+-2.15). Sensitivity-sweep all three in the backtest ("small parameter changes ->
+small performance changes" robustness, per the research doc); all three live in
+universe.yaml (risk_limits) for trivial tuning.

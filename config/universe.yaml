@@ -84,3 +84,28 @@ settings:
   start_date: "2003-01-01"   # earliest we'll fetch anything
   end_date: null              # null means "up to today"
   business_day_calendar: "US" # could be "NYSE" later
+
+# Risk buckets for portfolio risk limits (risk.py). Regrouped from the `etfs`
+# classes by RISK DRIVER rather than issuer label: LQD and EMB sit in `credit`
+# (spread-driven) not `rates`, since their risk is credit not pure duration;
+# BWX stays in `rates` (developed sovereign duration). Caps key off these.
+risk_buckets:
+  equity:      [SPY, IWM, EFA, EEM]
+  rates:       [IEF, TLT, BWX]
+  credit:      [LQD, HYG, EMB]
+  commodities: [GLD, SLV, DBC, USO, BNO]
+  fx:          [UUP, FXE, FXY, FXA]
+  real_assets: [VNQ, RWX]
+
+# Risk limits applied by risk.py to sizing's gross-unconstrained weights.
+# LITERATURE-ANCHORED PRIORS, not fitted — sensitivity-check in the backtest.
+# - max_position: per-asset cap (backstop vs single-name domination)
+# - max_bucket:   per-risk-bucket cap, uniform (no bucket owns the book)
+# - max_gross:    gross leverage cap (tail backstop above typical ~2.6x gross,
+#                 below the dangerous 4-6x low-vol-estimate excursions)
+# All fractions are of GROSS exposure (sum|w|); see risk.py for the long-short
+# gross-vs-net definitional choice.
+risk_limits:
+  max_position: 0.20
+  max_bucket:   0.50
+  max_gross:    3.0
