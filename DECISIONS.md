@@ -235,3 +235,83 @@ with its own design pass (throttle level / action are free parameters).
   signal turnover. Cost-trivial at 1bp (~10 bps/yr drag) but DEFERRED:
   decompose turnover (signal vs vol-scalar vs cap toggling) at the attribution
   stage; if the scalar dominates, smooth k_t (e.g. re-scale only on >x% moves).
+
+## Phase 4 Results — Beta decomposition + regime slices (the verdict)
+
+**Method.** scripts/evaluate_backtest.py: single-factor regression of each
+mode's daily EXCESS returns on SPY excess returns; alpha annualized, HAC t-stat
+(Newey-West, 21 lags) conditioning on estimated beta. scripts/evaluate_regimes.py:
+sub-window metrics on four macro regimes (windows fixed on PUBLIC events before
+seeing results) + a diversifier test (long_short overlaid on 60/40). 60/40
+(SPY/IEF) run through the SAME engine for apples-to-apples. Regression validated
+by the 60/40 anchor: beta 0.55, R2 0.94 (a 60% SPY book mechanically has beta
+~0.6, so this confirms the machinery).
+
+**Stage 1 -- the raw-Sharpe ranking INVERTS under decomposition.**
+
+| | Sharpe | alpha/y | alpha t | beta | R2 | MaxDD |
+|---|--------|---------|---------|------|----|-------|
+| long_short | 0.43 | +3.56% | 1.65 | 0.10 | 0.03 | -21.5% |
+| long_only  | 0.56 | +2.87% | 1.44 | 0.35 | 0.32 | -32.8% |
+| 60/40      | 0.62 | +0.95% | 1.73 | 0.55 | 0.94 | -32.6% |
+
+long_only's higher raw Sharpe is largely BETA in costume: R2 0.32, beta 0.35 x
+the period's ~7-8%/y equity premium accounts for ~2.5-3%/y of its return.
+long_short (beta 0.10, R2 0.03) is near-market-neutral -- almost its entire
+return is alpha. On ALPHA (the skill claim) long_short wins, +3.56 vs +2.87, with
+the higher t. NEITHER alpha is statistically decisive (t<2): long_short at 1.65
+is suggestive (p~0.10), long_only at 1.44 is borderline-noise. t scales with
+sqrt(T), so certifying long_short needs ~1.5x more sample (~another decade) --
+the normal fate of a true ~0.4-Sharpe alpha stream (hence breadth/many signals,
+not one clearing t=2).
+
+**Stage 2 -- long_short is a CRISIS-ALPHA strategy (the part the full-sample
+Sharpe hid).** Regime CAGR / Sharpe:
+
+| Regime | long_short | long_only |
+|--------|-----------|-----------|
+| GFC (07-10..09-03)        | +16.3% / 1.14 | -3.3% / -0.30 |
+| QE calm (12-01..19-12)    | +6.0% / 0.56  | +7.2% / 0.64  |
+| COVID (20-02..20-04)      | +33.8% / 1.59 | -45.3% / -1.18 |
+| Inflation (21-04..23-07)  | +15.2% / 1.12 | +7.0% / 0.49  |
+
+long_short made strong, high-Sharpe money in ALL THREE crises (both deflationary
+-- GFC, COVID -- and inflationary); long_only was hurt in both deflationary ones.
+Best regimes = market's worst regimes = crisis alpha, worth more than the 0.43
+full-sample Sharpe implies. CONFIRMS the design thesis (argued during the build):
+MOMENTUM is the general crash hedge (GFC/COVID, where InflationTrend was quiet --
+book went defensive via trend), INFLATION protection is regime-specific (2021-23,
+where the short-duration tilt paid). Both mechanisms fired in their respective
+regimes.
+
+**Inflation thesis VINDICATED.** The whole InflationTrend chain -- keeping it
+despite ~0 full-sample IC (regime-conditional), the shape-preserving /2 rescale
+(not re-z-scoring), the NO-demean net-short-duration tilt -- was designed for the
+inflation regime. Result there: +15.2% at Sharpe 1.12, MaxDD only -11.3%, while
+a duration-heavy 60/40 had its worst year in decades. Survived contact with data.
+
+**Drawdown anatomy.** long_short worst DD -21.5%: peak 2018-10-03 -> trough
+2021-02-25 -> recovery 2022-03-07. NOT the QE grind (hypothesis was wrong) -- it
+is the directionless 2019 chop + slow post-COVID recovery, and it RESOLVES when
+the inflation regime starts working (recovery = Mar-2022). long_short's pain is
+BOREDOM (no trends to trade); long_only's worst DD is the COVID crash itself
+(-32.8%, pure beta). The two books' drawdowns have opposite character.
+
+**Diversifier / portable-alpha test -- the institutionally correct frame.**
+corr(long_short, 60/40) = +0.17. A 70/30 blend (70% 60/40 + 30% long_short)
+scores Sharpe 0.70 (BEATS 60/40's 0.62) with MaxDD -19.4% (vs -32.6%). Higher
+Sharpe AND shallower drawdown -- the diversifier free-lunch signature.
+long_short was never competing with beta as a standalone Sharpe-maximizer; it is
+ADDITIVE to a beta portfolio, because its crisis-positive returns offset 60/40's
+crisis losses. (70/30 is a round-number split, deliberately NOT optimized --
+optimizing it would data-snoop the result.)
+
+**Verdict.** long_short = a near-market-neutral crisis-alpha strategy whose value
+is as a diversifier, not a standalone Sharpe play. long_only = a beta vehicle
+with a side of alpha (most of its return is free via an index fund; no crisis
+protection).
+
+**Standing caveats (do not drop).** (1) n=1 inflation regime. (2) Same-rate
+financing / no borrow fees flatters long_short SPECIFICALLY (its shorts). (3)
+Every regime slice is low-N -- behavioral illustrations, NOT significant
+sub-period claims. (4) Neither full-sample alpha clears t=2.
