@@ -60,10 +60,9 @@ class Signal(ABC):
     def _winsorize(df: pd.DataFrame, limit: float = 4.0) -> pd.DataFrame:
         """Clip extreme values to ±`limit` robust standard deviations per row.
 
-        Uses ROBUST statistics (median and MAD) rather than mean/std, because
-        mean and std are themselves corrupted by outliers — a single huge value
-        inflates the std so much the clipping band stretches past the outlier
-        and fails to catch it.
+        Uses median and MAD rather than mean/std, because mean and std are themselves 
+        corrupted by outliers — a single huge value inflates the std so much the 
+        clipping band stretches past the outlier and fails to catch it.
 
         MAD is scaled by 1.4826 so that for normally-distributed data it equals
         the standard deviation, keeping `limit` interpretable as "standard

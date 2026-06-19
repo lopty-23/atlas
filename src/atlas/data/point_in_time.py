@@ -1,9 +1,5 @@
 """Apply publication lags and vintage tracking to FRED data.
 
-Every macro release has a publication delay between the reference date 
-and the publication date. A backtest can only use information after it 
-has been published.
-
 This module handles two types of correction:
 
 1. FIXED LAG (`apply_publication_lags`): For market-based series where
@@ -17,11 +13,6 @@ This module handles two types of correction:
 
 Both produce a DataFrame indexed by trading-day calendar, where every 
 cell details what is publicly known on that day
-
-Public entry points:
-    apply_publication_lags(raw_fred, lag_map, target_index) -> DataFrame
-    align_vintages_to_calendar(vintages, target_index) -> DataFrame
-    build_pit_macro(raw_fred, vintages, prices, universe) -> DataFrame
 """
 from __future__ import annotations
 

@@ -1,11 +1,5 @@
 """Single source of truth for the 4-signal blend roster.
 
-Centralizes which signals are in the blend and how they are instantiated --
-especially BondCarry's dividend / unadjusted-price injection, which is easy to
-get subtly wrong if duplicated. Every script needing the roster (composite
-diagnostic, sizing, backtest) imports from here, so the construction cannot
-drift across call sites and silently disagree.
-
 GrowthTrend is intentionally absent: dropped from the blend in Phase 2 (COVID
 publication-lag whipsaw); reintroduce only after a Phase 3 nowcasting layer.
 """
