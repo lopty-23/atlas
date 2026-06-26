@@ -416,3 +416,70 @@ to the 3 parameters that could expose overfitting; the baseline is typical in al
 mechanism. Same-sample robustness only — not a substitute for out-of-sample
 validation. Standing caveats unchanged (n=1 inflation, same-rate financing
 flatters long_short).
+
+## Phase 4 Results — Bleed diagnostic (where the weakness actually is)
+
+**Method.** scripts/evaluate_bleed.py, long_short, diagnostic-only — mechanically
+locate the weak periods. Bleed measured absolute / excess-over-rf. Three layers: 
+(1) rolling badness (excess return + Sharpe at 126/252/504d) plus a top-N 
+drawdown-episode enumeration; (2) uniform-vs-concentrated on QE-calm (worst-quartile 
+share of monthly losses); (3) per-bucket contribution (exact) + per-signal leave-one-in 
+(interpretive) + InflationTrend magnitude + gross leverage, sliced to the worst windows 
+(peak->trough).
+
+**Signal-state caveat (why magnitude is reported only for inflation).** TSMomentum,
+BondCarry, FXCarry are per-date cross-sectionally z-scored, so their cross-sectional
+dispersion is ~1 every day by construction — it carries no regime information, and
+"momentum quiet" cannot be read off magnitude. It is read off contribution (leave-one-
+in). InflationTrend is time-series normalized, so its magnitude is meaningful and is
+reported directly.
+
+**Finding 1 — QE-calm is not a bleed, and it is not a grind.** Mean monthly excess
++0.475%, bucket total +5.98%/y (credit the top contributor at +3.98 — carry harvesting
+calm, consistent with attribution). The losses that do occur are concentrated, not
+uniform: worst-quartile share 0.82, so a few sharp down months own the damage inside an
+otherwise positive drift. The "uniform grind in trendless calm" sub-model is dead. And
+"momentum quiet in calm" is wrong: momentum is the BEST standalone signal in QE-calm
+(+0.60). A slow bull is a trend, and trend likes it.
+
+**Finding 2 — the bleeds are momentum whipsaw at reversals, not boredom.** The top-3
+drawdowns (2018-10->2021-02, -21.5%; the ongoing 2026-01->2026-03, -15.1%; 2011-04->
+2012-03, -14.6%) share one driver: TSMomentum is the WORST standalone signal in every
+one (-0.68, -4.96, -1.74), and the bleeding bucket rotates with where momentum was
+positioned (commodities in 2018-21 and 2026, rates in 2011). These are reversal /
+whipsaw events — the 2011 risk-on/off chop, the Q4-2018 reversal plus the post-COVID
+V-recovery rally running over the defensive book (the worst 252d excess window ends
+2021-04-22, the recovery year), and the 2026 episode — where trend gets caught offside.
+This is the structural cost of the same trend exposure that pays in sustained crises
+(momentum +1.12 GFC, +1.66 COVID). The earlier "pain is boredom / no trends to trade"
+read was directionally right (turns hurt trend) but mis-specified the mechanism:
+momentum is actively losing at reversals (strongly negative standalone), not sitting
+flat.
+
+**Finding 3 — inflation is ballast in the bleeds, not a cause.** InflationTrend was
+quiet in the deep DDs (0.45x full in DD#1, 0.14x in 2026) but its standalone Sharpe was
+POSITIVE there (+0.90 in DD#1) — it partially offset the momentum loss. "Inflation
+quiet" is true of its magnitude and false as an explanation of the loss.
+
+**Finding 4 — leverage amplification is episodic, not universal.** DD#1 ran at 2.58x
+gross vs 2.33x full: the vol-target scalar levered up through low-vol 2019, right into
+the reversals, deepening the DD (the "calm-period DD = amplified-leverage grind"
+principle, observed in the data). But DD#3 ran at 2.06x, below average. Vol-target
+amplification contributes to some bleeds, not all.
+
+**Corrected standing conclusion.** This is one trend-following risk signature, not
+"crisis alpha + a separate calm weakness." The book earns in sustained directional
+crises and bleeds at sharp reversals / whipsaws, occasionally worsened by vol-target
+leverage that crept up in the preceding calm. Momentum is the best signal in QE-calm
+(+0.60) and the worst in every drawdown — textbook trend-following, rewarded in trends
+and punished at turns. This supersedes the "trendless non-inflationary calm / carry
+grinding alone, momentum and inflation quiet" language carried in the handover §4/§7.
+
+**Caveats.** Leave-one-in is interpretive (does not sum to the combined book), so
+"momentum drove the loss" is the leading read, not an exact decomposition. DD#1's 2.4y
+peak-to-trough spans multiple regimes (2019 chop + COVID + post-COVID recovery + early
+inflation) — a composite, not one clean event. DD#2 is the ongoing 2026 episode: read
+it by depth and sign only; its annualized rates (-95%/y, Sharpes ±5) are artifacts of
+~42 days. In-sample description; it cannot certify the signature out of sample (walk-
+forward, still pending). Standing caveats unchanged (n=1 inflation, same-rate financing
+flatters long_short).
