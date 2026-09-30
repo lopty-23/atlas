@@ -10,8 +10,10 @@ Results will also be reported with their caveats (no p-hacking here as can be se
 how the numbers aren't that good in the first place).
 
 > Status: Phases 1, 2, and 4 complete (data layer, signals, evaluation,
-> portfolio construction, backtest, performance, results analysis). 154 tests
-> passing. Phase 3 (ML nowcasting) and live deployment are scoped but not built.
+> portfolio construction, backtest, performance, a four-stage results analysis,
+> and a drawdown/bleed diagnostic). 154 tests passing. Active work: adding
+> realistic financing costs. Next: walk-forward validation, then Phase 3 (ML
+> nowcasting) and live deployment.
 
 ---
 
@@ -110,6 +112,13 @@ transaction cost leave the verdict unchanged), except rebalancing frequency. How
 this is not because overfitting occured, but because quarterly rebalancing breaks the 
 strategy by being too slow to respond to signal changes. 
 
+A follow-up diagnostic pinned down where the book loses money. The weak spots are
+not the quiet, low-trend stretches (those are mildly positive), but the damage 
+clusters at sharp trend reversals, where momentum, the best signal in calm markets, 
+is the worst in every major drawdown. The strategy earns in sustained trends and 
+gives it back at the turns, which is the structural cost of trend exposure rather 
+than a separate defect. (Full diagnostic in `DECISIONS.md`.)
+
 Caveats (also in [`DECISIONS.md`](DECISIONS.md)): there's only one major
 inflation regime in the sample, so that result is n = 1. The backtest borrows and
 lends at the same rate with no short-borrow fees, which flatters the long-short
@@ -156,6 +165,7 @@ All commands run through uv.
     uv run python scripts/evaluate_regimes.py      # regime slices + diversifier test
     uv run python scripts/evaluate_attribution.py  # per-signal / per-bucket attribution
     uv run python scripts/evaluate_sensitivity.py  # parameter sensitivity sweeps
+    uv run python scripts/evaluate_bleed.py        # drawdown / bleed diagnostic
 
     # Run the test suite
     uv run python -m pytest tests/ -v
@@ -220,10 +230,25 @@ All commands run through uv.
 
 ---
 
+## Roadmap
+
+Current work: replacing the simplified financing model with realistic costs — a
+spread over the risk-free rate on net borrowing, plus per-asset short-borrow fees
+— so the long-short book's leverage and shorts are no longer free. Base fees are
+anchored to observed borrow rates and bounded with a low/high sweep, reported as a
+range rather than a single point estimate.
+
+Next: walk-forward (out-of-sample) validation of the in-sample results, then
+Phase 3 (an ML macro-nowcasting layer, which also reopens the dropped growth-trend
+signal) and a live signal-generation scaffold.
+
+---
+
 ## Scope and disclaimer
 
 This is a research and learning project, and a portfolio piece. The strategy is
-not deployed, the financing model is simplified (and flatters the long-short
-book), the inflation-regime result is n = 1, and the robustness analysis is
-in-sample rather than walk-forward. Nothing here is investment advice; backtested
-or IC-derived edges are not guarantees of live performance.
+not deployed, the financing model is still simplified (realistic borrow costs
+are in progress — see Roadmap), the inflation-regime result is n = 1, and the 
+robustness analysis is in-sample rather than walk-forward. Nothing here is 
+investment advice; backtested or IC-derived edges are not guarantees of live 
+performance.
