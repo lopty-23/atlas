@@ -30,3 +30,6 @@ htmlcov/
 
 # OS
 .DS_Store
+
+# Local working notes
+atlas_handover.md

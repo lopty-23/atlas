@@ -100,8 +100,8 @@ strong, high-Sharpe returns in all three stress periods — the GFC, COVID, and 
 regimes are the market's worst. Attribution confirms why this happens: momentum
 drives the deflationary-crash protection (GFC, COVID), inflation trend drives the
 inflation-regime protection (2021–23), and carry harvests the calm periods. Because
-the signals' good and bad regimes don't coinced, that's why the combined book has a 
-higher full-sample Sharpe than any individuals signal.
+the signals' good and bad regimes don't coincide, that's why the combined book has a 
+higher full-sample Sharpe than any individual signal.
 
 The long-short book is only ~0.17 correlated with 60/40, so adding a 30% sleeve raises 
 the blended Sharpe to 0.69 (from 0.62) and cuts max drawdown from −33% to −19%. This is
@@ -109,7 +109,7 @@ perhaps the most useful contribution given that it cannot beat the 60/40 standal
 
 The conclusions hold up under parameter changes (volatility window, leverage cap, and 
 transaction cost leave the verdict unchanged), except rebalancing frequency. However,
-this is not because overfitting occured, but because quarterly rebalancing breaks the 
+this is not because overfitting occurred, but because quarterly rebalancing breaks the 
 strategy by being too slow to respond to signal changes. 
 
 A follow-up diagnostic pinned down where the book loses money. The weak spots are
